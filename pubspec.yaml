@@ -1,0 +1,16 @@
+name: dart_kick_chat
+description: Anonymous Kick.com chat client for Dart. Connects via Pusher WebSocket — no OAuth required.
+version: 0.1.0
+repository: https://github.com/DiegPS/dart-kick-chat
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  http: ^1.2.0
+  http2: ^2.3.1
+  web_socket_channel: ^3.0.0
+
+dev_dependencies:
+  lints: ^3.0.0
+  test: ^1.24.0
