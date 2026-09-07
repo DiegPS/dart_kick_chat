@@ -19,8 +19,11 @@ sealed class KickEvent {
 }
 
 final class KickChatMessageEvent extends KickEvent {
-  KickChatMessageEvent(super.name, super.raw)
-      : message = ChatMessage.fromJson(raw);
+  KickChatMessageEvent(
+    super.name,
+    super.raw, {
+    Map<String, ParsedEmote> externalEmotes = const {},
+  }) : message = ChatMessage.fromJson(raw, externalEmotes: externalEmotes);
   final ChatMessage message;
 }
 
@@ -380,10 +383,18 @@ final class KickUnknownEvent extends KickEvent {
 }
 
 /// Parses the event name and JSON data used by Kick's Pusher transport.
-KickEvent parseKickEvent(String eventName, Object? data) {
+KickEvent parseKickEvent(
+  String eventName,
+  Object? data, {
+  Map<String, ParsedEmote> externalEmotes = const {},
+}) {
   final raw = _decodeMap(data);
   return switch (eventName) {
-    r'App\Events\ChatMessageEvent' => KickChatMessageEvent(eventName, raw),
+    r'App\Events\ChatMessageEvent' => KickChatMessageEvent(
+        eventName,
+        raw,
+        externalEmotes: externalEmotes,
+      ),
     r'App\Events\MessageDeletedEvent' =>
       KickMessageDeletedEvent(eventName, raw),
     r'App\Events\SubscriptionEvent' => KickSubscriptionEvent(eventName, raw),

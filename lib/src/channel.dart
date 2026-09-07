@@ -41,11 +41,13 @@ final class KickChannelTarget {
     required this.slug,
     required this.chatroomId,
     required this.channelId,
+    this.userId = 0,
   });
 
   final String slug;
   final int chatroomId;
   final int channelId;
+  final int userId;
 }
 
 /// Resolves public Kick channel slugs to their channel and chatroom IDs.
@@ -117,6 +119,7 @@ class KickChannelResolver {
       slug: slug,
       chatroomId: chatroomId,
       channelId: parseKickChannelIdFromHtml(response.body),
+      userId: parseKickUserIdFromHtml(response.body),
     );
   }
 }
@@ -167,11 +170,39 @@ KickChannelTarget? parseKickChannelTarget(String body, [String slug = '']) {
   final channelId = (decoded['id'] as num?)?.toInt() ??
       (chatroomMap['channel_id'] as num?)?.toInt() ??
       0;
+  final userId = (decoded['user_id'] as num?)?.toInt() ??
+      (decoded['user'] is Map
+          ? ((decoded['user'] as Map)['id'] as num?)?.toInt() ?? 0
+          : 0);
+  final resolvedSlug = (decoded['slug'] as String?)?.trim().toLowerCase() ?? '';
   return KickChannelTarget(
-    slug: (decoded['slug'] as String?)?.trim().toLowerCase() ?? slug,
+    slug: resolvedSlug.isEmpty ? slug : resolvedSlug,
     chatroomId: chatroomId,
     channelId: channelId,
+    userId: userId,
   );
+}
+
+/// Parses the broadcaster's public user ID from Kick's HTML bootstrap data.
+int parseKickUserIdFromHtml(String body) {
+  final nextMatch = _nextDataRe.firstMatch(body);
+  if (nextMatch == null) return 0;
+  try {
+    final decoded = jsonDecode(nextMatch.group(1)!);
+    if (decoded is! Map<String, dynamic>) return 0;
+    final props = decoded['props'];
+    final pageProps = props is Map<String, dynamic> ? props['pageProps'] : null;
+    final channel = pageProps is Map<String, dynamic>
+        ? pageProps['channel']
+        : decoded['channel'];
+    if (channel is! Map) return 0;
+    final map = Map<String, dynamic>.from(channel);
+    final user = map['user'];
+    return (map['user_id'] as num?)?.toInt() ??
+        (user is Map ? (user['id'] as num?)?.toInt() ?? 0 : 0);
+  } catch (_) {
+    return 0;
+  }
 }
 
 /// Parses a chatroom ID from a public Kick channel HTML document.

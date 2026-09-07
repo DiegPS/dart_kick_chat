@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'channel.dart';
+import 'enrichment.dart';
 import 'events.dart';
 import 'types.dart';
 
@@ -66,6 +67,8 @@ class KickClient {
     required Duration minimumStaleInterval,
     required double Function() randomDouble,
     required KickLogSink? logger,
+    required KickExternalEmoteLoader? emoteLoader,
+    required KickProfileResolver? profileResolver,
   })  : _channelResolver = channelResolver,
         _socketConnector = socketConnector,
         _reconnectDelay = reconnectDelay,
@@ -74,7 +77,9 @@ class KickClient {
         _subscriptionRefreshInterval = subscriptionRefreshInterval,
         _minimumStaleInterval = minimumStaleInterval,
         _randomDouble = randomDouble,
-        _logger = logger;
+        _logger = logger,
+        _emoteLoader = emoteLoader,
+        _profileResolver = profileResolver;
 
   final KickChannelResolver _channelResolver;
   final KickSocketConnector _socketConnector;
@@ -85,6 +90,8 @@ class KickClient {
   final Duration _minimumStaleInterval;
   final double Function() _randomDouble;
   final KickLogSink? _logger;
+  final KickExternalEmoteLoader? _emoteLoader;
+  final KickProfileResolver? _profileResolver;
   final StreamController<ChatMessage> _msgController =
       StreamController<ChatMessage>.broadcast();
   final StreamController<Exception> _errController =
@@ -95,7 +102,12 @@ class KickClient {
       StreamController<KickConnectionUpdate>.broadcast();
   final StreamController<String> _subscriptionController =
       StreamController<String>.broadcast();
+  final StreamController<KickProfileUpdate> _profileController =
+      StreamController<KickProfileUpdate>.broadcast();
+  final StreamController<Exception> _enrichmentErrorController =
+      StreamController<Exception>.broadcast();
   final Map<int, int> _joinedTargets = <int, int>{};
+  final Map<int, String> _joinedSlugs = <int, String>{};
   final Set<String> _seenMessageIds = <String>{};
   final List<String> _seenMessageOrder = <String>[];
   final Set<String> _seenEventKeys = <String>{};
@@ -110,6 +122,7 @@ class KickClient {
   int _reconnectAttempts = 0;
   bool _closed = false;
   KickConnectionState _connectionState = KickConnectionState.disconnected;
+  Map<String, ParsedEmote> _externalEmotes = const {};
 
   /// Dials Kick's Pusher WebSocket and starts reading frames.
   static Future<KickClient> connect({
@@ -122,6 +135,10 @@ class KickClient {
     Duration minimumStaleInterval = const Duration(minutes: 3),
     double Function()? randomDouble,
     KickLogSink? logger,
+    KickHttpGet? enrichmentHttpGet,
+    bool loadExternalEmotes = true,
+    bool enrichProfiles = true,
+    int maximumConcurrentProfileRequests = 3,
   }) async {
     final client = KickClient._(
       channelResolver: channelResolver ?? KickChannelResolver(),
@@ -134,6 +151,15 @@ class KickClient {
       minimumStaleInterval: minimumStaleInterval,
       randomDouble: randomDouble ?? Random().nextDouble,
       logger: logger,
+      emoteLoader: loadExternalEmotes
+          ? KickExternalEmoteLoader(httpGet: enrichmentHttpGet)
+          : null,
+      profileResolver: enrichProfiles
+          ? KickProfileResolver(
+              httpGet: enrichmentHttpGet,
+              maximumConcurrentRequests: maximumConcurrentProfileRequests,
+            )
+          : null,
     );
     await client._dial();
     client._readTask = client._readLoop();
@@ -146,10 +172,14 @@ class KickClient {
   /// Non-fatal connection and protocol errors.
   Stream<Exception> get errors => _errController.stream;
 
+  /// Optional enrichment failures; these never change connection state.
+  Stream<Exception> get enrichmentErrors => _enrichmentErrorController.stream;
+
   /// Every recognized or future public realtime event, with its raw fields.
   Stream<KickEvent> get events => _eventController.stream;
 
   Stream<KickConnectionUpdate> get connections => _connectionController.stream;
+  Stream<KickProfileUpdate> get profileUpdates => _profileController.stream;
   KickConnectionState get connectionState => _connectionState;
 
   /// Public Pusher topics explicitly confirmed by the server.
@@ -159,7 +189,11 @@ class KickClient {
   Future<void> joinBySlug(String slug) async {
     _ensureOpen();
     final target = await _channelResolver.resolveTarget(slug);
+    _joinedSlugs[target.chatroomId] = target.slug;
     _subscribeToResolvedChannel(target.chatroomId, target.channelId);
+    if (_emoteLoader != null && target.userId > 0) {
+      unawaited(_loadExternalEmotes(target.userId));
+    }
   }
 
   /// Joins an already resolved numeric chatroom ID.
@@ -189,6 +223,10 @@ class KickClient {
       await _subscriptionController.close();
     }
     if (!_errController.isClosed) await _errController.close();
+    if (!_profileController.isClosed) await _profileController.close();
+    if (!_enrichmentErrorController.isClosed) {
+      await _enrichmentErrorController.close();
+    }
   }
 
   Future<void> _dial() async {
@@ -334,7 +372,11 @@ class KickClient {
 
     final KickEvent parsed;
     try {
-      parsed = parseKickEvent(event, decoded['data']);
+      parsed = parseKickEvent(
+        event,
+        decoded['data'],
+        externalEmotes: _externalEmotes,
+      );
     } on KickProtocolException catch (error) {
       _addError(error);
       return;
@@ -342,9 +384,58 @@ class KickClient {
     if (!_rememberEvent(parsed)) return;
     if (!_eventController.isClosed) _eventController.add(parsed);
     if (parsed is KickChatMessageEvent) {
-      final message = parsed.message;
+      var message = parsed.message;
       if (!_rememberMessage(message.id)) return;
+      final channelSlug = _joinedSlugs[message.chatroomId] ?? '';
+      final cachedAvatar = _profileResolver?.peek(
+        channelSlug,
+        message.sender.slug,
+      );
+      if (message.sender.profilePictureUrl.isEmpty &&
+          cachedAvatar?.isNotEmpty == true) {
+        message = message.copyWith(
+          sender: message.sender.copyWith(profilePictureUrl: cachedAvatar),
+        );
+      }
       if (!_msgController.isClosed) _msgController.add(message);
+      if (message.sender.profilePictureUrl.isEmpty &&
+          channelSlug.isNotEmpty &&
+          message.sender.slug.isNotEmpty) {
+        unawaited(_resolveProfile(channelSlug, message.sender));
+      }
+    }
+  }
+
+  Future<void> _loadExternalEmotes(int userId) async {
+    try {
+      final loaded = await _emoteLoader!.loadSevenTv(userId);
+      if (!_closed) _externalEmotes = loaded;
+    } on Exception catch (error) {
+      _addEnrichmentError(error);
+    }
+  }
+
+  Future<void> _resolveProfile(String channelSlug, Sender sender) async {
+    try {
+      final avatar = await _profileResolver!.resolve(channelSlug, sender.slug);
+      if (!_closed && avatar.isNotEmpty && !_profileController.isClosed) {
+        _profileController.add(
+          KickProfileUpdate(
+            username: sender.username,
+            slug: sender.slug,
+            avatarUrl: avatar,
+          ),
+        );
+      }
+    } on Exception catch (error) {
+      _addEnrichmentError(error);
+    }
+  }
+
+  void _addEnrichmentError(Exception error) {
+    _log(error.toString());
+    if (!_closed && !_enrichmentErrorController.isClosed) {
+      _enrichmentErrorController.add(error);
     }
   }
 

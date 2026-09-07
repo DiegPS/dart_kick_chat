@@ -14,12 +14,13 @@ void main() {
 
     test('parses the channel target required by chat and channel topics', () {
       final target = parseKickChannelTarget(
-        '{"id":91,"slug":"Creator","chatroom":{"id":42}}',
+        '{"id":91,"user_id":73,"slug":"Creator","chatroom":{"id":42}}',
       );
 
       expect(target?.slug, 'creator');
       expect(target?.chatroomId, 42);
       expect(target?.channelId, 91);
+      expect(target?.userId, 73);
     });
 
     test('parses both known HTML representations', () {

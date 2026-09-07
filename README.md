@@ -19,6 +19,8 @@ account, OAuth token, cookies, message sending, or moderation privileges.
   and exponential reconnection with jitter.
 - Duplicate event suppression using stable payload identities.
 - Token and structured-fragment parsing for emotes and stickers.
+- Channel-specific 7TV emotes resolved anonymously from the broadcaster ID.
+- Optional profile-avatar enrichment with bounded concurrency and an LRU cache.
 - Explicit connection and channel-lookup timeouts.
 - Injectable HTTP and WebSocket transports for deterministic tests.
 - Opt-in diagnostics that never include chat content or user identities.
@@ -90,10 +92,15 @@ await monitor.start('creator');
 and emotes-only state. `fetchChatHistory` optionally accepts `startTime` for
 the same incremental history request used by the web application.
 
-The package intentionally does not call per-user profile endpoints for every
-message. Doing so would create an expensive N+1 request pattern. A sender
-avatar is exposed when Kick includes `profile_pic`; applications can otherwise
-render initials or implement their own explicitly cached enrichment policy.
+When Kick omits a sender avatar, the client emits the message immediately and
+resolves the public profile in the background. Requests are deduplicated,
+limited to three concurrent calls, cached in a 500-entry LRU for 12 hours, and
+reported separately through `enrichmentErrors`. Successful late results appear
+on `profileUpdates`, allowing a UI to refresh already visible messages. Set
+`enrichProfiles: false` in `KickClient.connect` to disable these requests.
+
+The broadcaster's channel-specific 7TV set is also loaded in the background.
+Set `loadExternalEmotes: false` to retain native Kick emotes only.
 
 ## Channel resolution
 

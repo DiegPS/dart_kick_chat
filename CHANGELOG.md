@@ -1,3 +1,11 @@
+## 0.5.0
+
+- Add anonymous channel-specific 7TV emotes using Kick's public user ID.
+- Add optional non-blocking avatar enrichment with request deduplication,
+  bounded concurrency, timeouts, and an LRU cache.
+- Expose profile updates and separate optional-enrichment errors without
+  changing chat connection state.
+
 ## 0.4.0
 
 - Added typed anonymous models for polls, rewards, KICK gifts, creator goals,

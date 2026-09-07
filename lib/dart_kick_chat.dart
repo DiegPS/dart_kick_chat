@@ -19,6 +19,7 @@ export 'src/channel.dart'
         parseKickChatroomId,
         parseKickChatroomIdFromHtml,
         parseKickChannelIdFromHtml,
+        parseKickUserIdFromHtml,
         parseKickChannelTarget,
         KickChannelTarget,
         KickChannelLookupException,
@@ -29,7 +30,19 @@ export 'src/channel.dart'
         kickHttpGet,
         normalizeKickSlug;
 export 'src/channel_monitor.dart' show KickChannelFetch, KickChannelMonitor;
-export 'src/emotes.dart' show parseEmotes, parseMessage, parseMessagePayload;
+export 'src/emotes.dart'
+    show
+        parseEmotes,
+        parseMessage,
+        parseMessagePayload,
+        parseMessagePayloadWithExternalEmotes,
+        parseMessageWithExternalEmotes;
+export 'src/enrichment.dart'
+    show
+        KickEnrichmentHttpException,
+        KickExternalEmoteLoader,
+        KickProfileResolver,
+        KickProfileUpdate;
 export 'src/events.dart'
     show
         KickChatMessageEvent,

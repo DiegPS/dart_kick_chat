@@ -37,12 +37,24 @@ List<ParsedEmote> parseEmotes(String content) {
 /// Plain text and emote items remain interleaved exactly as they appear, ready
 /// for direct rendering without further parsing.
 List<MessagePart> parseMessage(String content) {
+  return parseMessageWithExternalEmotes(content);
+}
+
+/// Splits native tokens and optional channel-specific third-party emotes.
+List<MessagePart> parseMessageWithExternalEmotes(
+  String content, {
+  Map<String, ParsedEmote> externalEmotes = const {},
+}) {
   final parts = <MessagePart>[];
   var last = 0;
 
   for (final m in _mediaPattern.allMatches(content)) {
     if (m.start > last) {
-      parts.add(MessagePart.text(content.substring(last, m.start)));
+      _appendExternalText(
+        parts,
+        content.substring(last, m.start),
+        externalEmotes,
+      );
     }
     final id = m.group(2)!;
     final name = m.group(3)!;
@@ -56,7 +68,7 @@ List<MessagePart> parseMessage(String content) {
   }
 
   if (last < content.length) {
-    parts.add(MessagePart.text(content.substring(last)));
+    _appendExternalText(parts, content.substring(last), externalEmotes);
   }
   if (parts.isEmpty) return [MessagePart.text(content)];
   return parts;
@@ -64,8 +76,21 @@ List<MessagePart> parseMessage(String content) {
 
 /// Parses current structured Kick message fragments, falling back to tokens.
 List<MessagePart> parseMessagePayload(Object? value, {String fallback = ''}) {
+  return parseMessagePayloadWithExternalEmotes(value, fallback: fallback);
+}
+
+List<MessagePart> parseMessagePayloadWithExternalEmotes(
+  Object? value, {
+  String fallback = '',
+  Map<String, ParsedEmote> externalEmotes = const {},
+}) {
   final fragments = _fragments(value);
-  if (fragments.isEmpty) return parseMessage(fallback);
+  if (fragments.isEmpty) {
+    return parseMessageWithExternalEmotes(
+      fallback,
+      externalEmotes: externalEmotes,
+    );
+  }
   final parts = <MessagePart>[];
   for (final fragment in fragments) {
     final kind =
@@ -95,9 +120,37 @@ List<MessagePart> parseMessagePayload(Object? value, {String fallback = ''}) {
         continue;
       }
     }
-    if (text.isNotEmpty) parts.addAll(parseMessage(text));
+    if (text.isNotEmpty) {
+      parts.addAll(parseMessageWithExternalEmotes(
+        text,
+        externalEmotes: externalEmotes,
+      ));
+    }
   }
-  return parts.isEmpty ? parseMessage(fallback) : parts;
+  return parts.isEmpty
+      ? parseMessageWithExternalEmotes(
+          fallback,
+          externalEmotes: externalEmotes,
+        )
+      : parts;
+}
+
+void _appendExternalText(
+  List<MessagePart> parts,
+  String text,
+  Map<String, ParsedEmote> externalEmotes,
+) {
+  if (text.isEmpty) return;
+  if (externalEmotes.isEmpty) {
+    parts.add(MessagePart.text(text));
+    return;
+  }
+  for (final token in RegExp(r'\S+|\s+').allMatches(text)) {
+    final value = token.group(0)!;
+    final emote = externalEmotes[value];
+    parts.add(
+        emote == null ? MessagePart.text(value) : MessagePart.emote(emote));
+  }
 }
 
 List<Map<String, dynamic>> _fragments(Object? value) {

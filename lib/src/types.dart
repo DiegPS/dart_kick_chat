@@ -120,6 +120,14 @@ class Sender {
   final String slug;
   final Identity identity;
   final String profilePictureUrl;
+
+  Sender copyWith({String? profilePictureUrl}) => Sender(
+        id: id,
+        username: username,
+        slug: slug,
+        identity: identity,
+        profilePictureUrl: profilePictureUrl ?? this.profilePictureUrl,
+      );
 }
 
 class MessageReferenceSender {
@@ -239,12 +247,19 @@ class ChatMessage {
     this.raw = const {},
   });
 
-  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+  factory ChatMessage.fromJson(
+    Map<String, dynamic> json, {
+    Map<String, ParsedEmote> externalEmotes = const {},
+  }) {
     final contentValue = json['content'];
     final content = contentValue is String
         ? contentValue
         : _plainFragmentText(contentValue ?? json);
-    final parts = parseMessagePayload(contentValue ?? json, fallback: content);
+    final parts = parseMessagePayloadWithExternalEmotes(
+      contentValue ?? json,
+      fallback: content,
+      externalEmotes: externalEmotes,
+    );
     return ChatMessage(
       id: json['id'] as String? ?? '',
       chatroomId: (json['chatroom_id'] as num?)?.toInt() ??
@@ -277,6 +292,20 @@ class ChatMessage {
   final ChatMessageMetadata metadata;
   final String? threadParentId;
   final Map<String, dynamic> raw;
+
+  ChatMessage copyWith({Sender? sender}) => ChatMessage(
+        id: id,
+        chatroomId: chatroomId,
+        content: content,
+        type: type,
+        createdAt: createdAt,
+        sender: sender ?? this.sender,
+        emotes: emotes,
+        parts: parts,
+        metadata: metadata,
+        threadParentId: threadParentId,
+        raw: raw,
+      );
 }
 
 String _plainFragmentText(Object? value) {
