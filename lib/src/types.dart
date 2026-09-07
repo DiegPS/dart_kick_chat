@@ -89,13 +89,30 @@ class Sender {
   });
 
   factory Sender.fromJson(Map<String, dynamic> json) => Sender(
-        id: (json['id'] as num?)?.toInt() ?? 0,
-        username: json['username'] as String? ?? '',
-        slug: json['slug'] as String? ?? '',
-        profilePictureUrl: json['profile_pic'] as String? ??
-            json['profilepic'] as String? ??
+        id: (json['id'] as num?)?.toInt() ??
+            (json['user_id'] as num?)?.toInt() ??
+            0,
+        username: json['username'] as String? ??
+            json['display_name'] as String? ??
             '',
-        identity: Identity.fromJson(_map(json['identity'])),
+        slug: json['slug'] as String? ??
+            json['channel_slug'] as String? ??
+            json['username'] as String? ??
+            '',
+        profilePictureUrl: json['profile_pic'] as String? ??
+            json['profile_picture'] as String? ??
+            json['profilepic'] as String? ??
+            json['avatar'] as String? ??
+            '',
+        identity: Identity.fromJson(
+          _map(json['identity']).isNotEmpty
+              ? _map(json['identity'])
+              : {
+                  'color': json['username_color'] as String? ?? '',
+                  'badges': const <Object?>[],
+                  'badges_v2': const <Object?>[],
+                },
+        ),
       );
 
   final int id;

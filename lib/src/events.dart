@@ -118,6 +118,257 @@ final class KickUserUnbannedEvent extends KickEvent {
   final Sender user;
 }
 
+/// A channel-points reward redeemed through Kick's public realtime transport.
+final class KickRewardRedeemedEvent extends KickEvent {
+  KickRewardRedeemedEvent(super.name, super.raw)
+      : redemptionId = _string(raw, const ['redemption_id', 'id']),
+        reward = KickReward.fromJson(
+          _firstMap(raw, const ['reward', 'channel_reward']),
+        ),
+        redeemer = Sender.fromJson(
+          _firstMap(raw, const ['redeemer', 'user', 'sender']),
+        ),
+        userInput = _string(raw, const ['user_input', 'message', 'input']),
+        status = _string(raw, const ['status']),
+        redeemedAt = _date(raw, const ['redeemed_at', 'created_at']);
+
+  final String redemptionId;
+  final KickReward reward;
+  final Sender redeemer;
+  final String userInput;
+  final String status;
+  final DateTime? redeemedAt;
+}
+
+/// Public details describing a redeemed Kick channel-points reward.
+final class KickReward {
+  const KickReward({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.cost,
+    required this.raw,
+  });
+
+  factory KickReward.fromJson(Map<String, dynamic> json) => KickReward(
+        id: _string(json, const ['id', 'reward_id']),
+        title: _string(json, const ['title', 'name']),
+        description: _string(json, const ['description']),
+        cost: _integer(json, const ['cost', 'price', 'points']),
+        raw: Map.unmodifiable(json),
+      );
+
+  final String id;
+  final String title;
+  final String description;
+  final int? cost;
+  final Map<String, dynamic> raw;
+}
+
+/// A monetary KICK gift visible on Kick's public channel topic.
+final class KickKicksGiftedEvent extends KickEvent {
+  KickKicksGiftedEvent(super.name, super.raw)
+      : transactionId = _string(
+          raw,
+          const ['gift_transaction_id', 'transaction_id', 'id'],
+        ),
+        sender = Sender.fromJson(
+          _firstMap(raw, const ['sender', 'supporter', 'gifter', 'user']),
+        ),
+        gift = KickGift.fromJson(
+          _firstMap(raw, const ['gift', 'kicks', 'kicks_gift']),
+        ),
+        message = _string(raw, const ['message', 'comment', 'note']),
+        createdAt = _date(raw, const ['created_at']);
+
+  final String transactionId;
+  final Sender sender;
+  final KickGift gift;
+  final String message;
+  final DateTime? createdAt;
+}
+
+/// Public product details included with a KICK gift.
+final class KickGift {
+  const KickGift({
+    required this.id,
+    required this.name,
+    required this.amount,
+    required this.type,
+    required this.tier,
+    required this.pinnedTimeSeconds,
+    required this.imageUrl,
+    required this.message,
+    required this.raw,
+  });
+
+  factory KickGift.fromJson(Map<String, dynamic> json) {
+    final id = _string(json, const ['gift_id', 'id']);
+    final explicitImage = _string(
+      json,
+      const ['image_url', 'imageUrl', 'thumbnail_url', 'thumbnailUrl'],
+    );
+    final normalizedId = id.replaceAll('_', '-');
+    return KickGift(
+      id: id,
+      name: _string(json, const ['name', 'title']),
+      amount: _integer(json, const ['amount', 'value']),
+      type: _string(json, const ['type']),
+      tier: _string(json, const ['tier']),
+      pinnedTimeSeconds: _integer(
+        json,
+        const ['pinned_time_seconds', 'pinned_time'],
+      ),
+      imageUrl: explicitImage.isNotEmpty ||
+              normalizedId.isEmpty ||
+              !RegExp(r'^[a-zA-Z0-9-]+$').hasMatch(normalizedId)
+          ? explicitImage
+          : 'https://files.kick.com/kicks/gifts/$normalizedId.webp',
+      message: _string(json, const ['message']),
+      raw: Map.unmodifiable(json),
+    );
+  }
+
+  final String id;
+  final String name;
+  final int? amount;
+  final String type;
+  final String tier;
+  final int? pinnedTimeSeconds;
+  final String imageUrl;
+  final String message;
+  final Map<String, dynamic> raw;
+}
+
+/// A selectable answer and its current public tally in a Kick poll.
+final class KickPollOption {
+  const KickPollOption({
+    required this.id,
+    required this.label,
+    required this.votes,
+    required this.raw,
+  });
+
+  factory KickPollOption.fromJson(Map<String, dynamic> json) => KickPollOption(
+        id: _string(json, const ['id', 'option_id']),
+        label: _string(json, const ['label', 'title', 'text']),
+        votes: _integer(json, const ['votes', 'vote_count', 'count']),
+        raw: Map.unmodifiable(json),
+      );
+
+  final String id;
+  final String label;
+  final int? votes;
+  final Map<String, dynamic> raw;
+}
+
+/// The current public state of a Kick poll.
+final class KickPollUpdatedEvent extends KickEvent {
+  KickPollUpdatedEvent(super.name, super.raw)
+      : pollId = _string(
+          _firstMap(raw, const ['poll']).isEmpty
+              ? raw
+              : _firstMap(raw, const ['poll']),
+          const ['id', 'poll_id'],
+        ),
+        title = _string(
+          _firstMap(raw, const ['poll']).isEmpty
+              ? raw
+              : _firstMap(raw, const ['poll']),
+          const ['title', 'question'],
+        ),
+        status = _string(raw, const ['status']),
+        durationSeconds = _integer(raw, const ['duration', 'duration_seconds']),
+        endsAt = _date(raw, const ['ends_at', 'expires_at']),
+        options = _maps(
+          _firstMap(raw, const ['poll']).isEmpty
+              ? raw['options']
+              : _firstMap(raw, const ['poll'])['options'],
+        ).map(KickPollOption.fromJson).toList(growable: false);
+
+  final String pollId;
+  final String title;
+  final String status;
+  final int? durationSeconds;
+  final DateTime? endsAt;
+  final List<KickPollOption> options;
+}
+
+/// Identifies a poll removed from the public chat.
+final class KickPollDeletedEvent extends KickEvent {
+  KickPollDeletedEvent(super.name, super.raw)
+      : pollId = _string(raw, const ['id', 'poll_id']);
+  final String pollId;
+}
+
+enum KickGoalAction { created, updated, progress, achieved, canceled }
+
+/// The current state of a public Kick creator goal.
+final class KickGoalEvent extends KickEvent {
+  KickGoalEvent(super.name, super.raw, this.action)
+      : goalId = _string(raw, const ['id', 'goal_id']),
+        title = _string(raw, const ['title', 'name', 'description']),
+        current = _integer(raw, const ['current', 'progress', 'current_value']),
+        target = _integer(raw, const ['target', 'goal', 'target_value']),
+        status = _string(raw, const ['status']),
+        endsAt = _date(raw, const ['ends_at', 'expires_at']);
+
+  final KickGoalAction action;
+  final String goalId;
+  final String title;
+  final int? current;
+  final int? target;
+  final String status;
+  final DateTime? endsAt;
+}
+
+/// A public Kick host event received from a channel topic.
+final class KickStreamHostedEvent extends KickEvent {
+  KickStreamHostedEvent(super.name, super.raw)
+      : host = Sender.fromJson(
+          _firstMap(raw, const ['host', 'hoster', 'sender', 'user']),
+        ),
+        hostedChannel = _string(
+          _firstMap(raw, const ['channel', 'hosted_channel']),
+          const ['slug', 'username', 'name'],
+        ),
+        viewerCount = _integer(
+          raw,
+          const ['viewer_count', 'viewers', 'number_viewers'],
+        );
+
+  final Sender host;
+  final String hostedChannel;
+  final int? viewerCount;
+}
+
+enum KickLivestreamAction { updated, started, stopped }
+
+/// A public realtime update to a Kick livestream.
+final class KickLivestreamEvent extends KickEvent {
+  KickLivestreamEvent(super.name, super.raw, this.action)
+      : livestreamId = _string(raw, const ['id', 'livestream_id']),
+        title = _string(raw, const ['session_title', 'title']),
+        viewerCount = _integer(raw, const ['viewer_count', 'viewers']),
+        createdAt = _date(raw, const ['created_at', 'start_time']);
+
+  final KickLivestreamAction action;
+  final String livestreamId;
+  final String title;
+  final int? viewerCount;
+  final DateTime? createdAt;
+}
+
+/// A public notice that chat moved to another supported Kick channel.
+final class KickChatMovedEvent extends KickEvent {
+  KickChatMovedEvent(super.name, super.raw)
+      : channelId = _integer(raw, const ['channel_id', 'supported_channel_id']),
+        channelSlug = _string(raw, const ['slug', 'channel_slug']);
+
+  final int? channelId;
+  final String channelSlug;
+}
+
 /// A recognized event whose evolving payload remains available through [raw].
 final class KickKnownEvent extends KickEvent {
   const KickKnownEvent(super.name, super.raw);
@@ -145,21 +396,27 @@ KickEvent parseKickEvent(String eventName, Object? data) {
       KickChatroomClearedEvent(eventName, raw),
     r'App\Events\UserBannedEvent' => KickUserBannedEvent(eventName, raw),
     r'App\Events\UserUnbannedEvent' => KickUserUnbannedEvent(eventName, raw),
-    'RewardRedeemedEvent' ||
-    r'App\Events\StreamHostedEvent' ||
-    'GoalCreatedEvent' ||
-    'GoalUpdatedEvent' ||
-    'GoalProgressUpdateEvent' ||
-    'GoalAchievedEvent' ||
-    'GoalCanceledEvent' ||
-    'KicksGifted' ||
-    r'App\Events\PollUpdateEvent' ||
-    r'App\Events\PollDeleteEvent' ||
-    r'App\Events\LivestreamUpdated' ||
-    r'App\Events\StreamerIsLive' ||
-    r'App\Events\StopStreamBroadcast' ||
+    'RewardRedeemedEvent' => KickRewardRedeemedEvent(eventName, raw),
+    'KicksGifted' => KickKicksGiftedEvent(eventName, raw),
+    r'App\Events\PollUpdateEvent' => KickPollUpdatedEvent(eventName, raw),
+    r'App\Events\PollDeleteEvent' => KickPollDeletedEvent(eventName, raw),
+    'GoalCreatedEvent' => KickGoalEvent(eventName, raw, KickGoalAction.created),
+    'GoalUpdatedEvent' => KickGoalEvent(eventName, raw, KickGoalAction.updated),
+    'GoalProgressUpdateEvent' =>
+      KickGoalEvent(eventName, raw, KickGoalAction.progress),
+    'GoalAchievedEvent' =>
+      KickGoalEvent(eventName, raw, KickGoalAction.achieved),
+    'GoalCanceledEvent' =>
+      KickGoalEvent(eventName, raw, KickGoalAction.canceled),
+    r'App\Events\StreamHostedEvent' => KickStreamHostedEvent(eventName, raw),
+    r'App\Events\LivestreamUpdated' =>
+      KickLivestreamEvent(eventName, raw, KickLivestreamAction.updated),
+    r'App\Events\StreamerIsLive' =>
+      KickLivestreamEvent(eventName, raw, KickLivestreamAction.started),
+    r'App\Events\StopStreamBroadcast' =>
+      KickLivestreamEvent(eventName, raw, KickLivestreamAction.stopped),
     r'App\Events\ChatMoveToSupportedChannelEvent' =>
-      KickKnownEvent(eventName, raw),
+      KickChatMovedEvent(eventName, raw),
     _ => KickUnknownEvent(eventName, raw),
   };
 }
@@ -184,3 +441,43 @@ Map<String, dynamic> _map(Object? value) =>
 
 List<String> _strings(Object? value) =>
     value is List ? value.map((item) => item.toString()).toList() : const [];
+
+Iterable<Map<String, dynamic>> _maps(Object? value) => value is List
+    ? value.whereType<Map>().map(Map<String, dynamic>.from)
+    : const <Map<String, dynamic>>[];
+
+Map<String, dynamic> _firstMap(
+  Map<String, dynamic> source,
+  List<String> keys,
+) {
+  for (final key in keys) {
+    final value = _map(source[key]);
+    if (value.isNotEmpty) return value;
+  }
+  return const {};
+}
+
+String _string(Map<String, dynamic> source, List<String> keys) {
+  for (final key in keys) {
+    final value = source[key];
+    if (value != null && value.toString().trim().isNotEmpty) {
+      return value.toString();
+    }
+  }
+  return '';
+}
+
+int? _integer(Map<String, dynamic> source, List<String> keys) {
+  for (final key in keys) {
+    final value = source[key];
+    if (value is num) return value.toInt();
+    final parsed = int.tryParse(value?.toString() ?? '');
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+DateTime? _date(Map<String, dynamic> source, List<String> keys) {
+  final value = _string(source, keys);
+  return value.isEmpty ? null : DateTime.tryParse(value);
+}

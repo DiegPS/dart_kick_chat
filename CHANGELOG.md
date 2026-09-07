@@ -1,3 +1,13 @@
+## 0.4.0
+
+- Added typed anonymous models for polls, rewards, KICK gifts, creator goals,
+  hosts, livestream lifecycle, and chat migration events.
+- Expanded public sender parsing for alternate IDs, slugs, avatars, display
+  names, and username colors used by evolving Kick payloads.
+- Preserved every original event field while exposing stable optional values.
+- Added regression coverage based on a captured public `KicksGifted` payload,
+  partial payloads, unsafe gift IDs, and every modeled lifecycle transition.
+
 ## 0.3.0
 
 - Added complete anonymous channel, livestream, chatroom, and initial-history

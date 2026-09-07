@@ -11,8 +11,10 @@ account, OAuth token, cookies, message sending, or moderation privileges.
   timestamps, and chatroom IDs.
 - Public channel/livestream metadata, chat restrictions, initial history, and
   pinned messages.
-- Realtime moderation, subscription, gift, pin, poll, reward, host, goal, and
-  lifecycle events, with lossless fallback for future event types.
+- Typed realtime moderation, subscription, gift, pin, poll, reward, KICK gift,
+  host, goal, livestream lifecycle, and chat-move events.
+- Lossless `raw` payloads on every evolving event and a fallback for future
+  event names.
 - Confirmed Pusher handshake, inactivity watchdog, periodic re-subscription,
   and exponential reconnection with jitter.
 - Duplicate event suppression using stable payload identities.
@@ -114,8 +116,16 @@ The client subscribes to `chatrooms.{id}.v2`, `chatroom_{id}`,
 `chatrooms.{id}`, and `channel_{channelId}`. This is required because Kick
 distributes ordinary chat, gifted subscriptions, hosted streams, goals, polls,
 and lifecycle events across different public topics.
-Known evolving events are represented by `KickKnownEvent`; genuinely new
-event names become `KickUnknownEvent`. Both preserve every field in `raw`.
+Public evolving events have dedicated types such as `KickPollUpdatedEvent`,
+`KickRewardRedeemedEvent`, `KickKicksGiftedEvent`, `KickGoalEvent`,
+`KickStreamHostedEvent`, and `KickLivestreamEvent`. Optional fields tolerate
+the payload variants Kick has used over time, and every type preserves the
+complete decoded object in `raw`. Recognized events that are not yet modeled
+become `KickKnownEvent`; genuinely new names become `KickUnknownEvent`.
+
+These types describe only events received from Kick's anonymous public Pusher
+topics. Availability is controlled by Kick and can vary per channel; the
+package never authenticates to fill missing data.
 
 For development, `dart run tool/inspect_live.dart <channel> [seconds]` prints
 only event names and field shapes. It deliberately omits message text and user
