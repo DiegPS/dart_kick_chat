@@ -12,6 +12,16 @@ void main() {
       expect(parseKickChatroomId('[]'), 0);
     });
 
+    test('parses the channel target required by chat and channel topics', () {
+      final target = parseKickChannelTarget(
+        '{"id":91,"slug":"Creator","chatroom":{"id":42}}',
+      );
+
+      expect(target?.slug, 'creator');
+      expect(target?.chatroomId, 42);
+      expect(target?.channelId, 91);
+    });
+
     test('parses both known HTML representations', () {
       expect(
         parseKickChatroomIdFromHtml(
@@ -20,6 +30,15 @@ void main() {
           '</script>',
         ),
         55,
+      );
+      expect(
+        parseKickChannelIdFromHtml(
+          '<script id="__NEXT_DATA__" type="application/json">'
+          '{"props":{"pageProps":{"channel":{"id":77,'
+          '"chatroom":{"id":55}}}}}'
+          '</script>',
+        ),
+        77,
       );
       expect(
         parseKickChatroomIdFromHtml('<div data-x="{&quot;chatroom&quot;}">'

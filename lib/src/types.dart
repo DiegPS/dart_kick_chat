@@ -180,10 +180,16 @@ class ChatMessageMetadata {
 }
 
 class ParsedEmote {
-  const ParsedEmote({required this.id, required this.name, required this.url});
+  const ParsedEmote({
+    required this.id,
+    required this.name,
+    required this.url,
+    this.isSticker = false,
+  });
   final String id;
   final String name;
   final String url;
+  final bool isSticker;
 }
 
 class MessagePart {
@@ -217,7 +223,11 @@ class ChatMessage {
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    final content = json['content'] as String? ?? '';
+    final contentValue = json['content'];
+    final content = contentValue is String
+        ? contentValue
+        : _plainFragmentText(contentValue ?? json);
+    final parts = parseMessagePayload(contentValue ?? json, fallback: content);
     return ChatMessage(
       id: json['id'] as String? ?? '',
       chatroomId: (json['chatroom_id'] as num?)?.toInt() ??
@@ -228,8 +238,11 @@ class ChatMessage {
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       sender: Sender.fromJson(_map(json['sender'])),
-      emotes: parseEmotes(content),
-      parts: parseMessage(content),
+      emotes: [
+        for (final part in parts)
+          if (part.emote case final emote?) emote,
+      ],
+      parts: parts,
       metadata: ChatMessageMetadata.fromJson(json['metadata']),
       threadParentId: json['thread_parent_id'] as String?,
       raw: Map<String, dynamic>.unmodifiable(json),
@@ -247,6 +260,21 @@ class ChatMessage {
   final ChatMessageMetadata metadata;
   final String? threadParentId;
   final Map<String, dynamic> raw;
+}
+
+String _plainFragmentText(Object? value) {
+  if (value is List) {
+    return value.map(_plainFragmentText).join();
+  }
+  if (value is! Map) return value?.toString() ?? '';
+  final map = Map<String, dynamic>.from(value);
+  for (final key in const ['fragments', 'content', 'parts', 'messages']) {
+    if (map[key] is List) return _plainFragmentText(map[key]);
+  }
+  for (final key in const ['emote', 'sticker']) {
+    if (map[key] is Map) return _plainFragmentText(map[key]);
+  }
+  return (map['text'] ?? map['name'] ?? '').toString();
 }
 
 Map<String, dynamic> _metadataMap(Object? value) {

@@ -35,7 +35,20 @@ typedef KickHttpGet = Future<KickHttpResponse> Function(
   Map<String, String> headers,
 );
 
-/// Resolves public Kick channel slugs to numeric chatroom IDs.
+/// Public identifiers required by Kick's anonymous Pusher topics.
+final class KickChannelTarget {
+  const KickChannelTarget({
+    required this.slug,
+    required this.chatroomId,
+    required this.channelId,
+  });
+
+  final String slug;
+  final int chatroomId;
+  final int channelId;
+}
+
+/// Resolves public Kick channel slugs to their channel and chatroom IDs.
 class KickChannelResolver {
   KickChannelResolver({
     KickHttpGet? httpGet,
@@ -48,9 +61,14 @@ class KickChannelResolver {
   final KickHttpGet _http2Get;
   final Duration requestTimeout;
 
-  Future<int> resolve(String slug) async {
+  /// Backwards-compatible chatroom-only resolution.
+  Future<int> resolve(String slug) async =>
+      (await resolveTarget(slug)).chatroomId;
+
+  /// Resolves all public identifiers used by Kick's anonymous Pusher topics.
+  Future<KickChannelTarget> resolveTarget(String slug) async {
     final normalizedSlug = normalizeKickSlug(slug);
-    final attempts = <Future<int> Function()>[
+    final attempts = <Future<KickChannelTarget?> Function()>[
       () => _tryJson(
             _http2Get,
             Uri.parse('$_kickBase/api/v2/channels/$normalizedSlug'),
@@ -68,8 +86,8 @@ class KickChannelResolver {
 
     for (final attempt in attempts) {
       try {
-        final id = await attempt();
-        if (id > 0) return id;
+        final target = await attempt();
+        if (target != null && target.chatroomId > 0) return target;
       } catch (_) {
         // Strategies are independent; exhaust every anonymous fallback.
       }
@@ -77,13 +95,13 @@ class KickChannelResolver {
     throw KickChannelLookupException(normalizedSlug);
   }
 
-  Future<int> _tryJson(KickHttpGet get, Uri uri) async {
+  Future<KickChannelTarget?> _tryJson(KickHttpGet get, Uri uri) async {
     final response = await get(uri, _browserHeaders).timeout(requestTimeout);
-    if (response.statusCode != HttpStatus.ok) return 0;
-    return parseKickChatroomId(response.body);
+    if (response.statusCode != HttpStatus.ok) return null;
+    return parseKickChannelTarget(response.body, uri.pathSegments.last);
   }
 
-  Future<int> _tryHtml(String slug) async {
+  Future<KickChannelTarget?> _tryHtml(String slug) async {
     final response = await _httpGet(
       Uri.parse('$_kickBase/$slug'),
       {
@@ -92,8 +110,14 @@ class KickChannelResolver {
             'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
     ).timeout(requestTimeout);
-    if (response.statusCode != HttpStatus.ok) return 0;
-    return parseKickChatroomIdFromHtml(response.body);
+    if (response.statusCode != HttpStatus.ok) return null;
+    final chatroomId = parseKickChatroomIdFromHtml(response.body);
+    if (chatroomId <= 0) return null;
+    return KickChannelTarget(
+      slug: slug,
+      chatroomId: chatroomId,
+      channelId: parseKickChannelIdFromHtml(response.body),
+    );
   }
 }
 
@@ -122,6 +146,34 @@ int parseKickChatroomId(String body) {
   return (chatroom['id'] as num?)?.toInt() ?? 0;
 }
 
+/// Parses both public identifiers exposed by Kick's channel response.
+KickChannelTarget? parseKickChannelTarget(String body, [String slug = '']) {
+  if (body.isEmpty) return null;
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(body);
+  } catch (_) {
+    return null;
+  }
+  if (decoded is! Map<String, dynamic>) return null;
+  final chatroom = decoded['chatroom'];
+  final chatroomMap = chatroom is Map
+      ? Map<String, dynamic>.from(chatroom)
+      : const <String, dynamic>{};
+  final chatroomId = (decoded['chatroom_id'] as num?)?.toInt() ??
+      (chatroomMap['id'] as num?)?.toInt() ??
+      0;
+  if (chatroomId <= 0) return null;
+  final channelId = (decoded['id'] as num?)?.toInt() ??
+      (chatroomMap['channel_id'] as num?)?.toInt() ??
+      0;
+  return KickChannelTarget(
+    slug: (decoded['slug'] as String?)?.trim().toLowerCase() ?? slug,
+    chatroomId: chatroomId,
+    channelId: channelId,
+  );
+}
+
 /// Parses a chatroom ID from a public Kick channel HTML document.
 int parseKickChatroomIdFromHtml(String body) {
   final nextMatch = _nextDataRe.firstMatch(body);
@@ -139,6 +191,28 @@ int parseKickChatroomIdFromHtml(String body) {
   }
   final directMatch = _chatroomIdRe.firstMatch(body);
   return directMatch == null ? 0 : int.tryParse(directMatch.group(1)!) ?? 0;
+}
+
+/// Parses the public channel ID from a Kick HTML bootstrap document.
+int parseKickChannelIdFromHtml(String body) {
+  final nextMatch = _nextDataRe.firstMatch(body);
+  if (nextMatch == null) return 0;
+  try {
+    final decoded = jsonDecode(nextMatch.group(1)!);
+    if (decoded is! Map<String, dynamic>) return 0;
+    final props = decoded['props'];
+    final pageProps = props is Map<String, dynamic> ? props['pageProps'] : null;
+    final channel = pageProps is Map<String, dynamic>
+        ? pageProps['channel']
+        : decoded['channel'];
+    if (channel is! Map) return 0;
+    final map = Map<String, dynamic>.from(channel);
+    return (map['id'] as num?)?.toInt() ??
+        (map['channel_id'] as num?)?.toInt() ??
+        0;
+  } catch (_) {
+    return 0;
+  }
 }
 
 /// Normalizes a public Kick slug, handle, or channel URL.

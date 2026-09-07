@@ -25,6 +25,14 @@ void main() {
       expect(emotes, hasLength(2));
       expect(emotes.map((e) => e.name), containsAll(['PogChamp', 'LUL']));
     });
+
+    test('extracts stickers without confusing them with ordinary emotes', () {
+      final media = parseEmotes('[sticker:999:Celebration]');
+
+      expect(media, hasLength(1));
+      expect(media.single.name, 'Celebration');
+      expect(media.single.isSticker, isTrue);
+    });
   });
 
   group('parseMessage', () {
@@ -119,6 +127,33 @@ void main() {
 
       expect(msg.sender.identity.badges, hasLength(1));
       expect(msg.sender.identity.badges.first.type, 'moderator');
+    });
+
+    test('structured fragments preserve text, emotes and stickers', () {
+      final msg = ChatMessage.fromJson({
+        'id': 'structured',
+        'chatroom_id': 1,
+        'content': {
+          'fragments': [
+            {'type': 'text', 'text': 'hello '},
+            {
+              'type': 'emote',
+              'emote': {'id': 12, 'name': 'Wave', 'url': 'https://cdn/wave'}
+            },
+            {
+              'type': 'sticker',
+              'sticker': {'id': 13, 'name': 'Party'}
+            },
+          ],
+        },
+        'sender': const <String, Object?>{},
+      });
+
+      expect(msg.parts, hasLength(3));
+      expect(msg.parts[0].text, 'hello ');
+      expect(msg.parts[1].emote?.url, 'https://cdn/wave');
+      expect(msg.parts[2].emote?.isSticker, isTrue);
+      expect(msg.content, 'hello WaveParty');
     });
   });
 }

@@ -13,8 +13,10 @@ account, OAuth token, cookies, message sending, or moderation privileges.
   pinned messages.
 - Realtime moderation, subscription, gift, pin, poll, reward, host, goal, and
   lifecycle events, with lossless fallback for future event types.
-- Automatic WebSocket reconnection and re-subscription.
-- Duplicate message suppression using stable Kick message IDs.
+- Confirmed Pusher handshake, inactivity watchdog, periodic re-subscription,
+  and exponential reconnection with jitter.
+- Duplicate event suppression using stable payload identities.
+- Token and structured-fragment parsing for emotes and stickers.
 - Explicit connection and channel-lookup timeouts.
 - Injectable HTTP and WebSocket transports for deterministic tests.
 - Opt-in diagnostics that never include chat content or user identities.
@@ -70,6 +72,18 @@ print(history.messages.length);
 print(history.pinnedMessage?.message.content);
 ```
 
+For a serialized live metadata stream, including anonymous viewer count, use
+`KickChannelMonitor`. It polls every 15 seconds by default and never overlaps
+requests:
+
+```dart
+final monitor = KickChannelMonitor();
+monitor.states.listen((channel) {
+  print(channel.livestream?.viewerCount);
+});
+await monitor.start('creator');
+```
+
 `fetchChatroom` provides the public slow, followers-only, subscribers-only,
 and emotes-only state. `fetchChatHistory` optionally accepts `startTime` for
 the same incremental history request used by the web application.
@@ -96,9 +110,10 @@ functions are exposed for consumers that already own the response body.
 
 ## Realtime event coverage
 
-The client subscribes to `chatrooms.{id}.v2`, `chatroom_{id}`, and
-`chatrooms.{id}`. This is required because Kick distributes ordinary chat,
-gifted subscriptions, and hosted-stream events across different public topics.
+The client subscribes to `chatrooms.{id}.v2`, `chatroom_{id}`,
+`chatrooms.{id}`, and `channel_{channelId}`. This is required because Kick
+distributes ordinary chat, gifted subscriptions, hosted streams, goals, polls,
+and lifecycle events across different public topics.
 Known evolving events are represented by `KickKnownEvent`; genuinely new
 event names become `KickUnknownEvent`. Both preserve every field in `raw`.
 

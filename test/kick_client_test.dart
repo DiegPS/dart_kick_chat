@@ -81,6 +81,75 @@ void main() {
     expect(await event, isA<KickGiftedSubscriptionsEvent>());
   });
 
+  test('subscribes to channel events when resolution exposes channel ID',
+      () async {
+    final socket = FakeKickSocket();
+    final client = await KickClient.connect(
+      socketConnector: (_) => socket,
+      channelResolver: _targetResolver(chatroomId: 42, channelId: 91),
+    );
+    addTearDown(client.close);
+
+    await client.joinBySlug('creator');
+    final channels = socket.sent
+        .where(_isSubscription)
+        .map((frame) =>
+            (jsonDecode(frame)['data'] as Map<String, dynamic>)['channel'])
+        .toSet();
+
+    expect(channels, contains('channel_91'));
+  });
+
+  test('reports a confirmed Pusher connection and refreshes subscriptions',
+      () async {
+    final socket = FakeKickSocket();
+    final client = await KickClient.connect(
+      socketConnector: (_) => socket,
+      channelResolver: _resolverFor(42),
+      subscriptionRefreshInterval: const Duration(milliseconds: 5),
+    );
+    addTearDown(client.close);
+    final states = <KickConnectionState>[];
+    client.connections.listen((update) => states.add(update.state));
+    await client.joinBySlug('creator');
+    final before = socket.sent.where(_isSubscription).length;
+
+    socket.emit(jsonEncode({
+      'event': 'pusher:connection_established',
+      'data': jsonEncode({'activity_timeout': 60}),
+    }));
+    await _until(() => socket.sent.where(_isSubscription).length > before);
+
+    expect(states, contains(KickConnectionState.connected));
+  });
+
+  test('reports confirmed subscriptions and deduplicates every event',
+      () async {
+    final socket = FakeKickSocket();
+    final client = await KickClient.connect(socketConnector: (_) => socket);
+    addTearDown(client.close);
+    final subscriptions = <String>[];
+    final events = <KickEvent>[];
+    client.subscriptions.listen(subscriptions.add);
+    client.events.listen(events.add);
+
+    socket.emit(jsonEncode({
+      'event': 'pusher_internal:subscription_succeeded',
+      'channel': 'channel_91',
+      'data': const <String, Object?>{},
+    }));
+    final frame = jsonEncode({
+      'event': 'GoalUpdatedEvent',
+      'data': jsonEncode({'id': 7, 'current': 2}),
+    });
+    socket.emit(frame);
+    socket.emit(frame);
+    await _flush();
+
+    expect(subscriptions, ['channel_91']);
+    expect(events, hasLength(1));
+  });
+
   test('reconnects and re-subscribes joined channels', () async {
     final first = FakeKickSocket();
     final second = FakeKickSocket();
@@ -159,6 +228,20 @@ KickChannelResolver _resolverFor(int id) => KickChannelResolver(
       http2Get: (_, __) async => KickHttpResponse(
         statusCode: 200,
         body: '{"chatroom_id":$id}',
+      ),
+      httpGet: (_, __) async =>
+          const KickHttpResponse(statusCode: 500, body: ''),
+    );
+
+KickChannelResolver _targetResolver({
+  required int chatroomId,
+  required int channelId,
+}) =>
+    KickChannelResolver(
+      http2Get: (_, __) async => KickHttpResponse(
+        statusCode: 200,
+        body: '{"id":$channelId,"slug":"creator",'
+            '"chatroom":{"id":$chatroomId}}',
       ),
       httpGet: (_, __) async =>
           const KickHttpResponse(statusCode: 500, body: ''),
