@@ -3,8 +3,9 @@ import 'package:dart_kick_chat/src/types.dart';
 const _emoteCdn = 'https://files.kick.com/emotes/%s/fullsize';
 final _emotePattern = RegExp(r'\[emote:(\d+):([^\]]+)\]');
 
-/// Extracts all unique [emote:id:name] tokens from raw message [content]
-/// and returns them as a deduplicated list with CDN URLs.
+/// Extracts all unique `emote:id:name` tokens from raw message [content].
+///
+/// Returns a deduplicated list with CDN URLs.
 List<ParsedEmote> parseEmotes(String content) {
   final matches = _emotePattern.allMatches(content);
   if (matches.isEmpty) return const [];
@@ -27,9 +28,10 @@ List<ParsedEmote> parseEmotes(String content) {
   return emotes;
 }
 
-/// Splits raw message [content] into an ordered list of [MessagePart]s —
-/// plain text and emote items interleaved exactly as they appear.
-/// Suitable for direct rendering without any further parsing.
+/// Splits raw message [content] into an ordered list of [MessagePart]s.
+///
+/// Plain text and emote items remain interleaved exactly as they appear, ready
+/// for direct rendering without further parsing.
 List<MessagePart> parseMessage(String content) {
   final parts = <MessagePart>[];
   var last = 0;

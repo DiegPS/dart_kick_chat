@@ -12,19 +12,16 @@ void main() {
       expect(emotes, hasLength(1));
       expect(emotes.first.id, '37225');
       expect(emotes.first.name, 'KEKLEO');
-      expect(emotes.first.url,
-          'https://files.kick.com/emotes/37225/fullsize');
+      expect(emotes.first.url, 'https://files.kick.com/emotes/37225/fullsize');
     });
 
     test('deduplicates repeated emotes', () {
-      final emotes =
-          parseEmotes('[emote:37225:KEKLEO] [emote:37225:KEKLEO]');
+      final emotes = parseEmotes('[emote:37225:KEKLEO] [emote:37225:KEKLEO]');
       expect(emotes, hasLength(1));
     });
 
     test('extracts multiple distinct emotes', () {
-      final emotes =
-          parseEmotes('[emote:111:PogChamp] hello [emote:222:LUL]');
+      final emotes = parseEmotes('[emote:111:PogChamp] hello [emote:222:LUL]');
       expect(emotes, hasLength(2));
       expect(emotes.map((e) => e.name), containsAll(['PogChamp', 'LUL']));
     });
@@ -60,8 +57,7 @@ void main() {
     });
 
     test('interleaved text and emotes preserve order', () {
-      final parts =
-          parseMessage('hello [emote:1:A] world [emote:2:B] bye');
+      final parts = parseMessage('hello [emote:1:A] world [emote:2:B] bye');
       expect(parts, hasLength(5));
       expect(parts[0].text, 'hello ');
       expect(parts[1].emote!.name, 'A');
@@ -71,8 +67,7 @@ void main() {
     });
 
     test('repeated emote appears multiple times in parts', () {
-      final parts =
-          parseMessage('[emote:1:A] [emote:1:A]');
+      final parts = parseMessage('[emote:1:A] [emote:1:A]');
       expect(parts, hasLength(3)); // emote, text " ", emote
       expect(parts[0].isEmote, isTrue);
       expect(parts[2].isEmote, isTrue);
