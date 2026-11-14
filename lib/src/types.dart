@@ -210,11 +210,13 @@ class ParsedEmote {
     required this.name,
     required this.url,
     this.isSticker = false,
+    this.isZeroWidth = false,
   });
   final String id;
   final String name;
   final String url;
   final bool isSticker;
+  final bool isZeroWidth;
 }
 
 class MessagePart {

@@ -39,10 +39,24 @@ final class KickExternalEmoteLoader {
         id: id,
         name: name,
         url: 'https://cdn.7tv.app/emote/$id/1x.webp',
+        isZeroWidth: _isSevenTvZeroWidth(item),
       );
     }
     return Map.unmodifiable(result);
   }
+
+  static bool _isSevenTvZeroWidth(Map<String, dynamic> activeEmote) {
+    final data = activeEmote['data'];
+    final dataFlags = data is Map ? _intFlag(data['flags']) : 0;
+    return _intFlag(activeEmote['flags']) & 1 != 0 || dataFlags & 256 != 0;
+  }
+
+  static int _intFlag(Object? value) => switch (value) {
+        int flag => flag,
+        num flag => flag.toInt(),
+        String flag => int.tryParse(flag) ?? 0,
+        _ => 0,
+      };
 }
 
 /// Resolves public Kick avatars with bounded concurrency and an in-memory LRU.

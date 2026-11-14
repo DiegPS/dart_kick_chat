@@ -1,3 +1,7 @@
+## 0.6.0
+
+- Preserve 7TV zero-width flags so clients can layer modifier emotes.
+
 ## 0.5.0
 
 - Add anonymous channel-specific 7TV emotes using Kick's public user ID.

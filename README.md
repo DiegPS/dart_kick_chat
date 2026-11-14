@@ -19,7 +19,8 @@ account, OAuth token, cookies, message sending, or moderation privileges.
   and exponential reconnection with jitter.
 - Duplicate event suppression using stable payload identities.
 - Token and structured-fragment parsing for emotes and stickers.
-- Channel-specific 7TV emotes resolved anonymously from the broadcaster ID.
+- Channel-specific 7TV emotes resolved anonymously from the broadcaster ID,
+  including zero-width modifier metadata.
 - Optional profile-avatar enrichment with bounded concurrency and an LRU cache.
 - Explicit connection and channel-lookup timeouts.
 - Injectable HTTP and WebSocket transports for deterministic tests.

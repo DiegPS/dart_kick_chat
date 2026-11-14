@@ -11,7 +11,10 @@ void main() {
       return const KickHttpResponse(
         statusCode: 200,
         body: '{"emote_set":{"emotes":['
-            '{"id":"abc","name":"KickLaugh"}]}}',
+            '{"id":"abc","name":"KickLaugh","flags":1,'
+            '"data":{"flags":256}},'
+            '{"id":"def","name":"PrivateOnly","flags":2,'
+            '"data":{"flags":1}}]}}',
       );
     });
 
@@ -19,6 +22,8 @@ void main() {
 
     expect(requested.toString(), 'https://7tv.io/v3/users/kick/42');
     expect(emotes['KickLaugh']?.url, 'https://cdn.7tv.app/emote/abc/1x.webp');
+    expect(emotes['KickLaugh']?.isZeroWidth, isTrue);
+    expect(emotes['PrivateOnly']?.isZeroWidth, isFalse);
   });
 
   test('external Kick emotes preserve whitespace and native tokens', () {
