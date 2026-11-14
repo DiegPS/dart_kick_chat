@@ -1,8 +1,13 @@
 # dart_kick_chat
 
 An anonymous, read-only Kick live-chat client for Dart. It resolves a public
-channel to its chatroom and consumes Kick's public Pusher WebSocket without an
-account, OAuth token, cookies, message sending, or moderation privileges.
+channel to its chatroom and consumes Kick's public realtime WebSocket without
+an account, OAuth token, cookies, message sending, or moderation privileges.
+
+Kick moved its web chat from Pusher to a Centrifugo realtime service in 2026,
+and the old Pusher app key stopped working. Since 0.7.0 the client asks Kick's
+realtime API where to connect, obtains an anonymous guest token, and speaks the
+Centrifuge JSON protocol, exactly like the kick.com web client.
 
 ## Features
 
@@ -15,8 +20,9 @@ account, OAuth token, cookies, message sending, or moderation privileges.
   host, goal, livestream lifecycle, and chat-move events.
 - Lossless `raw` payloads on every evolving event and a fallback for future
   event names.
-- Confirmed Pusher handshake, inactivity watchdog, periodic re-subscription,
-  and exponential reconnection with jitter.
+- Confirmed realtime handshake, server ping replies, inactivity watchdog,
+  background guest-token refresh, periodic re-subscription, and exponential
+  reconnection with jitter (each reconnect uses a fresh token).
 - Duplicate event suppression using stable payload identities.
 - Token and structured-fragment parsing for emotes and stickers.
 - Channel-specific 7TV emotes resolved anonymously from the broadcaster ID,
@@ -131,8 +137,9 @@ the payload variants Kick has used over time, and every type preserves the
 complete decoded object in `raw`. Recognized events that are not yet modeled
 become `KickKnownEvent`; genuinely new names become `KickUnknownEvent`.
 
-These types describe only events received from Kick's anonymous public Pusher
-topics. Availability is controlled by Kick and can vary per channel; the
+These types describe only events received from Kick's anonymous public
+realtime topics (`chatrooms.{id}.v2`, `chatroom_{id}`, `chatrooms.{id}` and
+`channel_{id}`). Availability is controlled by Kick and can vary per channel; the
 package never authenticates to fill missing data.
 
 For development, `dart run tool/inspect_live.dart <channel> [seconds]` prints
@@ -141,8 +148,8 @@ values.
 
 ## Testing custom transports
 
-`KickHttpGet`, `KickSocket`, and `KickSocketConnector` are intentionally small
-interfaces. They allow applications to simulate timeouts, corrupt frames,
+`KickHttpGet`, `KickHttpPost`, `KickRealtimeApi`, `KickSocket`, and
+`KickSocketConnector` are intentionally small interfaces. They allow applications to simulate timeouts, corrupt frames,
 remote closes, and reconnects without contacting Kick. Production callers can
 normally use the defaults.
 
@@ -155,7 +162,7 @@ bodies, usernames, or message content.
 
 Kick now also offers an official authenticated developer API. This package does
 not use it because its scope is anonymous, read-only chat. The public web
-endpoints and Pusher topics used here are not a versioned contract and can
+endpoints and realtime topics used here are not a versioned contract and can
 change.
 Consumers should listen to `errors`, tolerate temporary resolution failures,
 and keep this package updated.

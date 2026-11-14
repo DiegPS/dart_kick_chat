@@ -35,7 +35,7 @@ typedef KickHttpGet = Future<KickHttpResponse> Function(
   Map<String, String> headers,
 );
 
-/// Public identifiers required by Kick's anonymous Pusher topics.
+/// Public identifiers required by Kick's anonymous realtime topics.
 final class KickChannelTarget {
   const KickChannelTarget({
     required this.slug,
@@ -67,7 +67,7 @@ class KickChannelResolver {
   Future<int> resolve(String slug) async =>
       (await resolveTarget(slug)).chatroomId;
 
-  /// Resolves all public identifiers used by Kick's anonymous Pusher topics.
+  /// Resolves all public identifiers used by Kick's anonymous realtime topics.
   Future<KickChannelTarget> resolveTarget(String slug) async {
     final normalizedSlug = normalizeKickSlug(slug);
     final attempts = <Future<KickChannelTarget?> Function()>[

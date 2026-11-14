@@ -382,7 +382,7 @@ final class KickUnknownEvent extends KickEvent {
   const KickUnknownEvent(super.name, super.raw);
 }
 
-/// Parses the event name and JSON data used by Kick's Pusher transport.
+/// Parses the event name and JSON data of a Kick realtime publication.
 KickEvent parseKickEvent(
   String eventName,
   Object? data, {

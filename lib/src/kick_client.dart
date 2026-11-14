@@ -7,10 +7,14 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'channel.dart';
 import 'enrichment.dart';
 import 'events.dart';
+import 'realtime.dart';
 import 'types.dart';
 
-const _pusherUrl = 'wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679'
-    '?protocol=7&client=js&version=8.4.0-rc2&flash=false';
+/// Centrifugo error code for a channel that is already subscribed.
+const _alreadySubscribed = 105;
+
+/// Fraction of the token lifetime after which the token is refreshed.
+const _tokenRefreshRatio = 0.8;
 
 /// Receives diagnostic messages that never contain chat content or identities.
 typedef KickLogSink = void Function(String message);
@@ -54,11 +58,14 @@ final class _WebSocketChannelAdapter implements KickSocket {
 
 /// Anonymous Kick.com chat client.
 ///
-/// Connects to Kick's public Pusher WebSocket without OAuth. A disconnected
-/// client reconnects automatically and re-subscribes to joined chatrooms.
+/// Connects to Kick's public realtime (Centrifugo) WebSocket without OAuth:
+/// it asks Kick's realtime API where to connect, obtains a guest token, then
+/// speaks the Centrifuge JSON protocol. A disconnected client reconnects
+/// automatically with a fresh token and re-subscribes to joined chatrooms.
 class KickClient {
   KickClient._({
     required KickChannelResolver channelResolver,
+    required KickRealtimeApi realtimeApi,
     required KickSocketConnector socketConnector,
     required Duration reconnectDelay,
     required Duration maximumReconnectDelay,
@@ -70,6 +77,7 @@ class KickClient {
     required KickExternalEmoteLoader? emoteLoader,
     required KickProfileResolver? profileResolver,
   })  : _channelResolver = channelResolver,
+        _realtimeApi = realtimeApi,
         _socketConnector = socketConnector,
         _reconnectDelay = reconnectDelay,
         _maximumReconnectDelay = maximumReconnectDelay,
@@ -82,6 +90,7 @@ class KickClient {
         _profileResolver = profileResolver;
 
   final KickChannelResolver _channelResolver;
+  final KickRealtimeApi _realtimeApi;
   final KickSocketConnector _socketConnector;
   final Duration _reconnectDelay;
   final Duration _maximumReconnectDelay;
@@ -113,10 +122,19 @@ class KickClient {
   final Set<String> _seenEventKeys = <String>{};
   final List<String> _seenEventOrder = <String>[];
 
+  final String _clientId = _newClientId();
+
   KickSocket? _socket;
   Future<void>? _readTask;
   Timer? _watchdogTimer;
   Timer? _subscriptionRefreshTimer;
+  Timer? _tokenRefreshTimer;
+  bool _handshakeDone = false;
+  int _nextCommandId = 0;
+  int _connectCommandId = 0;
+  final Map<int, String> _pendingSubscriptions = <int, String>{};
+  final Map<int, Completer<Map<String, dynamic>>> _pendingReplies =
+      <int, Completer<Map<String, dynamic>>>{};
   DateTime _lastActivity = DateTime.now().toUtc();
   Duration _activityTimeout = const Duration(seconds: 60);
   int _reconnectAttempts = 0;
@@ -124,9 +142,13 @@ class KickClient {
   KickConnectionState _connectionState = KickConnectionState.disconnected;
   Map<String, ParsedEmote> _externalEmotes = const {};
 
-  /// Dials Kick's Pusher WebSocket and starts reading frames.
+  /// Opens Kick's realtime WebSocket and starts reading frames.
+  ///
+  /// [realtimeApi] tells the client where to connect and provides guest
+  /// tokens; inject one to point at other endpoints or to test.
   static Future<KickClient> connect({
     KickChannelResolver? channelResolver,
+    KickRealtimeApi? realtimeApi,
     KickSocketConnector? socketConnector,
     Duration reconnectDelay = const Duration(seconds: 5),
     Duration maximumReconnectDelay = const Duration(seconds: 30),
@@ -142,6 +164,7 @@ class KickClient {
   }) async {
     final client = KickClient._(
       channelResolver: channelResolver ?? KickChannelResolver(),
+      realtimeApi: realtimeApi ?? KickRealtimeApi(),
       socketConnector:
           socketConnector ?? (uri) => _WebSocketChannelAdapter(uri),
       reconnectDelay: reconnectDelay,
@@ -182,7 +205,7 @@ class KickClient {
   Stream<KickProfileUpdate> get profileUpdates => _profileController.stream;
   KickConnectionState get connectionState => _connectionState;
 
-  /// Public Pusher topics explicitly confirmed by the server.
+  /// Public realtime topics explicitly confirmed by the server.
   Stream<String> get subscriptions => _subscriptionController.stream;
 
   /// Joins a Kick channel by its public slug.
@@ -209,8 +232,8 @@ class KickClient {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    _watchdogTimer?.cancel();
-    _subscriptionRefreshTimer?.cancel();
+    _stopSessionTimers();
+    _failPendingReplies();
     _emitConnection(KickConnectionState.disconnected);
     final socket = _socket;
     _socket = null;
@@ -233,7 +256,9 @@ class KickClient {
     _emitConnection(_reconnectAttempts == 0
         ? KickConnectionState.connecting
         : KickConnectionState.reconnecting);
-    final socket = _socketConnector(Uri.parse(_pusherUrl));
+    final url = await _realtimeApi.connectionUrl(_clientId);
+    final token = await _realtimeApi.connectionToken(_clientId);
+    final socket = _socketConnector(url);
     try {
       await socket.ready.timeout(_connectionTimeout);
     } catch (_) {
@@ -245,8 +270,24 @@ class KickClient {
       return;
     }
     _socket = socket;
+    _handshakeDone = false;
+    _nextCommandId = 0;
+    _pendingSubscriptions.clear();
     _noteActivity();
+    _connectCommandId = _send(
+      (id) => {
+        'id': id,
+        'connect': {'token': token, 'name': 'js'},
+      },
+    );
     _log('WebSocket connected');
+  }
+
+  /// Sends a command built with a fresh ID and returns that ID.
+  int _send(Map<String, Object?> Function(int id) build) {
+    final id = ++_nextCommandId;
+    _socket?.add(jsonEncode(build(id)));
+    return id;
   }
 
   void _subscribeToResolvedChannel(int chatroomId, int channelId) {
@@ -257,18 +298,28 @@ class KickClient {
   }
 
   void _sendSubscription(int chatroomId, [int channelId = 0]) {
+    // Commands are only valid after the handshake; joined topics are sent
+    // once it completes.
+    if (!_handshakeDone) return;
     for (final channel in <String>[
       'chatrooms.$chatroomId.v2',
       'chatroom_$chatroomId',
       'chatrooms.$chatroomId',
       if (channelId > 0) 'channel_$channelId',
     ]) {
-      _socket?.add(
-        jsonEncode({
-          'event': 'pusher:subscribe',
-          'data': {'channel': channel, 'auth': ''},
-        }),
+      final id = _send(
+        (id) => {
+          'id': id,
+          'subscribe': {'channel': channel},
+        },
       );
+      _pendingSubscriptions[id] = channel;
+    }
+  }
+
+  void _subscribeAllJoined() {
+    for (final target in _joinedTargets.entries) {
+      _sendSubscription(target.key, target.value);
     }
   }
 
@@ -291,8 +342,9 @@ class KickClient {
       }
       if (!_closed) {
         _socket = null;
-        _watchdogTimer?.cancel();
-        _subscriptionRefreshTimer?.cancel();
+        _handshakeDone = false;
+        _stopSessionTimers();
+        _failPendingReplies();
         await _reconnect();
       }
     }
@@ -311,9 +363,6 @@ class KickClient {
     if (_closed) return;
     try {
       await _dial();
-      for (final target in _joinedTargets.entries) {
-        _sendSubscription(target.key, target.value);
-      }
     } on Exception catch (error) {
       if (!_closed) _addError(error);
     } catch (error) {
@@ -321,11 +370,20 @@ class KickClient {
     }
   }
 
+  /// Handles one WebSocket message, which may carry several
+  /// newline-separated Centrifuge frames.
   void _handleFrame(String raw) {
     _noteActivity();
+    for (final line in const LineSplitter().convert(raw)) {
+      if (line.trim().isEmpty) continue;
+      _handleCommandFrame(line);
+    }
+  }
+
+  void _handleCommandFrame(String line) {
     final Object? decoded;
     try {
-      decoded = jsonDecode(raw);
+      decoded = jsonDecode(line);
     } catch (_) {
       _addError(const KickProtocolException('invalid frame JSON'));
       return;
@@ -335,46 +393,164 @@ class KickClient {
       return;
     }
 
-    final event = decoded['event'];
-    if (event == 'pusher:connection_established') {
-      final data = _decodePusherData(decoded['data']);
-      final seconds = (data['activity_timeout'] as num?)?.toInt() ?? 60;
-      _activityTimeout = Duration(seconds: max(1, seconds));
-      _reconnectAttempts = 0;
-      _startWatchdog();
-      _startSubscriptionRefresh();
-      for (final target in _joinedTargets.entries) {
-        _sendSubscription(target.key, target.value);
-      }
-      _emitConnection(KickConnectionState.connected);
+    // An empty frame is a server ping; answer with an empty frame.
+    if (decoded.isEmpty) {
+      _socket?.add('{}');
       return;
     }
-    if (event == 'pusher:ping') {
-      _socket?.add(jsonEncode({'event': 'pusher:pong', 'data': {}}));
+
+    final id = (decoded['id'] as num?)?.toInt() ?? 0;
+    if (id > 0) {
+      _handleReply(id, decoded);
       return;
     }
-    if (event == 'pusher:error') {
-      final data = _decodePusherData(decoded['data']);
+
+    final push = decoded['push'];
+    if (push is! Map) return;
+    final disconnect = push['disconnect'];
+    if (disconnect is Map) {
+      final code = disconnect['code'];
       _addError(KickProtocolException(
-        'Pusher error${data['code'] == null ? '' : ' ${data['code']}'}',
+        'realtime server disconnected the client'
+        '${code == null ? '' : ' ($code)'}',
       ));
       unawaited(_socket?.close());
       return;
     }
-    if (event == 'pusher_internal:subscription_succeeded') {
-      final channel = decoded['channel']?.toString() ?? '';
-      if (channel.isNotEmpty && !_subscriptionController.isClosed) {
-        _subscriptionController.add(channel);
+    final publication = push['pub'];
+    if (publication is! Map) return;
+    final envelope = _decodeMap(publication['data']);
+    final event = envelope['event'];
+    if (event is! String || event.isEmpty) return;
+    _handleEvent(event, envelope['data']);
+  }
+
+  void _handleReply(int id, Map<String, dynamic> reply) {
+    final error = reply['error'];
+    final code = error is Map ? (error['code'] as num?)?.toInt() : null;
+    final suffix = code == null ? '' : ' ($code)';
+
+    if (id == _connectCommandId) {
+      if (error != null) {
+        _addError(KickProtocolException('realtime connect rejected$suffix'));
+        unawaited(_socket?.close());
+        return;
+      }
+      _onConnected(_decodeMap(reply['connect']));
+      return;
+    }
+
+    final channel = _pendingSubscriptions.remove(id);
+    if (channel != null) {
+      if (error == null || code == _alreadySubscribed) {
+        if (!_subscriptionController.isClosed) {
+          _subscriptionController.add(channel);
+        }
+      } else {
+        _addError(
+          KickProtocolException('subscription to $channel rejected$suffix'),
+        );
       }
       return;
     }
-    if (event is! String || event.startsWith('pusher')) return;
 
+    final pending = _pendingReplies.remove(id);
+    if (pending != null && !pending.isCompleted) {
+      if (error == null) {
+        pending.complete(reply);
+      } else {
+        pending.completeError(
+          KickProtocolException('realtime command rejected$suffix'),
+        );
+      }
+    }
+  }
+
+  void _onConnected(Map<String, dynamic> connect) {
+    _handshakeDone = true;
+    final pingSeconds = (connect['ping'] as num?)?.toInt() ?? 25;
+    _activityTimeout = Duration(seconds: max(1, pingSeconds));
+    _reconnectAttempts = 0;
+    _startWatchdog();
+    _startSubscriptionRefresh();
+    final ttl = (connect['ttl'] as num?)?.toInt() ?? 0;
+    if (connect['expires'] == true && ttl > 0) {
+      _scheduleTokenRefresh(Duration(seconds: ttl));
+    }
+    _subscribeAllJoined();
+    _emitConnection(KickConnectionState.connected);
+  }
+
+  /// Refreshes the guest token before it expires. If refreshing fails the
+  /// socket is closed so the client reconnects with a new token.
+  void _scheduleTokenRefresh(Duration ttl) {
+    _tokenRefreshTimer?.cancel();
+    final delay = Duration(
+      milliseconds: max(1, (ttl.inMilliseconds * _tokenRefreshRatio).round()),
+    );
+    final socket = _socket;
+    _tokenRefreshTimer = Timer(delay, () async {
+      if (_closed || socket == null || !identical(socket, _socket)) return;
+      try {
+        final token = await _realtimeApi.connectionToken(_clientId);
+        if (_closed || !identical(socket, _socket)) return;
+        final reply = await _request(
+          (id) => {
+            'id': id,
+            'refresh': {'token': token},
+          },
+        );
+        final refresh = _decodeMap(reply['refresh']);
+        final next = (refresh['ttl'] as num?)?.toInt() ?? 0;
+        if (refresh['expires'] == true && next > 0) {
+          _scheduleTokenRefresh(Duration(seconds: next));
+        }
+        _log('realtime token refreshed');
+      } on Exception catch (error) {
+        if (_closed || !identical(socket, _socket)) return;
+        _addError(error);
+        unawaited(socket.close());
+      }
+    });
+  }
+
+  /// Sends a command and waits for its reply.
+  Future<Map<String, dynamic>> _request(
+    Map<String, Object?> Function(int id) build,
+  ) {
+    final completer = Completer<Map<String, dynamic>>();
+    final id = _send(build);
+    _pendingReplies[id] = completer;
+    return completer.future.timeout(_connectionTimeout, onTimeout: () {
+      _pendingReplies.remove(id);
+      throw const KickProtocolException('realtime command timed out');
+    });
+  }
+
+  void _failPendingReplies() {
+    for (final pending in _pendingReplies.values) {
+      if (!pending.isCompleted) {
+        pending.completeError(
+          const KickProtocolException('realtime connection closed'),
+        );
+      }
+    }
+    _pendingReplies.clear();
+    _pendingSubscriptions.clear();
+  }
+
+  void _stopSessionTimers() {
+    _watchdogTimer?.cancel();
+    _subscriptionRefreshTimer?.cancel();
+    _tokenRefreshTimer?.cancel();
+  }
+
+  void _handleEvent(String event, Object? data) {
     final KickEvent parsed;
     try {
       parsed = parseKickEvent(
         event,
-        decoded['data'],
+        data,
         externalEmotes: _externalEmotes,
       );
     } on KickProtocolException catch (error) {
@@ -493,7 +669,7 @@ class KickClient {
           return;
         }
         _addError(
-            const KickProtocolException('Pusher connection became stale'));
+            const KickProtocolException('realtime connection became stale'));
         unawaited(_socket?.close());
       },
     );
@@ -502,11 +678,11 @@ class KickClient {
   void _startSubscriptionRefresh() {
     _subscriptionRefreshTimer?.cancel();
     if (_subscriptionRefreshInterval <= Duration.zero) return;
+    // Re-subscribing is harmless (the server answers "already subscribed")
+    // and recovers a subscription the server dropped silently.
     _subscriptionRefreshTimer =
         Timer.periodic(_subscriptionRefreshInterval, (_) {
-      for (final target in _joinedTargets.entries) {
-        _sendSubscription(target.key, target.value);
-      }
+      _subscribeAllJoined();
     });
   }
 
@@ -517,7 +693,8 @@ class KickClient {
     }
   }
 
-  static Map<String, dynamic> _decodePusherData(Object? value) {
+  /// Decodes a JSON object that may arrive as a map or as a JSON string.
+  static Map<String, dynamic> _decodeMap(Object? value) {
     Object? decoded = value;
     if (value is String) {
       try {
@@ -529,6 +706,14 @@ class KickClient {
     return decoded is Map
         ? Map<String, dynamic>.from(decoded)
         : const <String, dynamic>{};
+  }
+
+  static String _newClientId() {
+    final random = Random.secure();
+    return List<String>.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
   }
 
   void _log(String message) => _logger?.call(message);

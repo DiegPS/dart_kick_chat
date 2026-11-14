@@ -1,3 +1,18 @@
+## 0.7.0
+
+- Connect through Kick's realtime (Centrifugo) service. Kick retired the
+  Pusher app key, so previous versions received no messages: they reported a
+  successful join and then reconnected forever after `Pusher error 4001`.
+- Request the connection descriptor and an anonymous guest token from Kick's
+  realtime API (`KickRealtimeApi`), refresh the token before it expires, and
+  use a fresh token on every reconnect.
+- Speak the Centrifuge JSON protocol: handshake, newline-batched frames,
+  server pings, subscription replies (`subscriptions` now reports confirmed
+  topics; rejected ones are reported on `errors`), and server disconnects.
+- Subscriptions requested before the handshake are sent once it completes.
+- New exports: `KickRealtimeApi`, `KickRealtimeException`, `KickHttpPost`,
+  `kickHttpPost`. `KickClient.connect` accepts `realtimeApi`.
+
 ## 0.6.0
 
 - Preserve 7TV zero-width flags so clients can layer modifier emotes.
